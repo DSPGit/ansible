@@ -1,17 +1,58 @@
 ---
-- hosts: webservers
+- hosts: localhost
+  vars:
+    sgname: testsg
+    vpcid: vpc-40714a3b
+    region: us-east-1
+    kpname: my_keypair
+    ins_type: t2.micro
+    img_id: ami-6871a115
+    count: 2
+    ins_name: ansible_demo
   tasks:
-  - name: ensure apache is at the latest version
-    yum:
-      name: httpd
-      state: latest
-  - name: ensure apache is running
-    service:
-      name: httpd
-      state: started
-  - copy:
-      src: files/index.html
-      dest: /var/www/html/index.html
-  - copy:
-      src: files/new.html
-      dest: /var/www/html/new.html
+    - name: creating a security group
+      ec2_group:
+        name: "{{ sgname }}"
+        description: my webserver sg
+        vpc_id: "{{ vpcid }}"
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports:
+              - 80
+              - 22
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow ports 80 & 22
+      register: testsg_out
+    - debug:
+        var: testsg_out
+    - name: create key pair using key_material obtained using 'file' lookup plugin
+      ec2_key:
+        name: "{{ kpname }}"
+        key_material: "{{ lookup('file', '/home/ec2-user/environment/my-key.pub') }}"
+      register: testkp_out
+    - debug:
+        var: testkp_out        
+    - ec2:
+        exact_count: "{{ count }}"
+        count_tag:
+          Name: "{{ ins_name }}"
+        key_name: "{{ kpname }}"
+        instance_type: "{{ ins_type }}"
+        image: "{{ img_id }}"
+        wait: yes
+        group: "{{ sgname }}"
+        region: "{{ region }}"
+        vpc_subnet_id: subnet-ba978985
+        assign_public_ip: yes
+        instance_tags:
+            Name: "{{ ins_name }}"
+      register: ec2_out
+    - debug:
+        var: ec2_out
+    - name: add host to group "{{ ins_name }}"
+      add_host:
+        name: localhost
+      register: host_out
+    - debug:
+        var: host_out
