@@ -14,6 +14,15 @@
     ins_name: ansible_demo
     elbname: test-lbs
   tasks:
+    # Example git checkout from Ansible Playbooks
+    - name: ensure git installed
+      yum:
+        name: git
+        state: latest
+    - git:
+        repo: 'https://github.com/vinitbhamare/testweb.git'
+        dest: /home/ec2-user/environment/testweb/
+        version: master
     ########### creating a security group #############
     - name: creating a security group
       ec2_group:
@@ -146,7 +155,7 @@
     ########### Copy the changes and notify #############
     - name: Templating the httpd.conf
       template:
-        src: /home/ec2-user/environment/httpd.j2
+        src: /home/ec2-user/environment/files/httpd.j2
         dest: /etc/httpd/conf/httpd.conf
       notify: restart apache
       
@@ -157,6 +166,9 @@
     - copy:
         src: files/new.html
         dest: /var/www/html/new.html
+    - copy:
+        src: testweb/
+        dest: /var/www/html/
   
   ########### Notification handler #############
   handlers:
