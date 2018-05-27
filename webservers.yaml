@@ -1,5 +1,5 @@
 ---
-########### All the operations on host #############
+########### All the operations on localhost #############
 - hosts: localhost
   vars:
     sgname: testsg
@@ -14,6 +14,7 @@
     ins_name: ansible_demo
     elbname: test-lbs
   tasks:
+    ########### creating a security group #############
     - name: creating a security group
       ec2_group:
         name: "{{ sgname }}"
@@ -30,6 +31,8 @@
       register: testsg_out
     - debug:
         var: testsg_out
+        
+    ########### creating a keypair #############
     - name: create key pair using key_material obtained using 'file' lookup plugin
       ec2_key:
         name: "{{ kpname }}"
@@ -37,6 +40,8 @@
       register: testkp_out
     - debug:
         var: testkp_out        
+    
+    ########### creating EC2 instances #############
     - ec2:
         exact_count: "{{ count }}"
         count_tag:
@@ -54,6 +59,8 @@
       register: ec2_out
     - debug:
         var: ec2_out
+        
+    ########### create HOSTs group #############
     - name: add host to group "{{ ins_name }}"
       add_host:
         name: "{{ item.dns_name }}"
@@ -62,6 +69,8 @@
       register: host_out
     - debug:
         var: host_out
+        
+    ########### wait and connect #############
     - name: wait for connection
       wait_for:
         host: "{{ item.dns_name }}"
@@ -71,6 +80,7 @@
         state: started
       loop: "{{ ec2_out.tagged_instances }}"
       
+    ########### New security group for load balancer #############
     - name: creating a security group for load balancer
       ec2_group:
         name: "{{ lbssgname }}"
@@ -87,6 +97,7 @@
     - debug:
         var: lbssg_out
         
+    ########### Create load balancer #############
     - name: Basic provisioning for lbs
       ec2_elb_lb:
         name: "{{ elbname }}"
@@ -94,6 +105,7 @@
         state: present
         zones:
           - us-east-1e
+        security_group_names: "{{ lbssgname }}"
         listeners:
           - protocol: http # options are http, https, ssl, tcp
             load_balancer_port: 80
@@ -101,13 +113,17 @@
       register: lbs_out
     - debug:
         var: lbs_out
-#        
-#    - name: Instance Register
-#      ec2_elb:
-#        instance_id: "{{ ansible_ec2_instance_id }}"
-#        ec2_elbs: "{{ item }}"
-#        state: present
-#      loop:
+        
+    ########### Register all EC2 instances with Load Balancer #############
+    - name: Instance Register
+      ec2_elb:
+        instance_id: "{{ item.id }}"
+        ec2_elbs: "{{ elbname }}"
+        region: "{{ region }}"
+        state: present
+      loop: "{{ ec2_out.tagged_instances }}"
+
+########### All the operations on webservers #############
 - hosts: webservers
   become: True
   gather_facts: True
@@ -115,25 +131,34 @@
   vars:
     ansible_ssh_private_key_file: /home/ec2-user/environment/my-key.pem
   tasks:
+    ########### Install Apache HTTP server #############
     - name: ensure apache is at the latest version
       yum:
         name: httpd
         state: latest
+    
+    ########### Run the server #############
     - name: ensure apache is running
       service:
         name: httpd
         state: started
+    
+    ########### Copy the changes and notify #############
     - name: Templating the httpd.conf
       template:
         src: /home/ec2-user/environment/httpd.j2
         dest: /etc/httpd/conf/httpd.conf
       notify: restart apache
+      
+    ########### File copy #############
     - copy:
         src: files/index.html
         dest: /var/www/html/index.html
     - copy:
         src: files/new.html
         dest: /var/www/html/new.html
+  
+  ########### Notification handler #############
   handlers:
     - name: restart apache
       service:
