@@ -1,14 +1,18 @@
 ---
+########### All the operations on host #############
 - hosts: localhost
   vars:
     sgname: testsg
+    lbssgname: lbssg
     vpcid: vpc-40714a3b
+    vpcsubnet: subnet-ba978985
     region: us-east-1
     kpname: my_keypair
     ins_type: t2.micro
     img_id: ami-6871a115
     count: 2
     ins_name: ansible_demo
+    elbname: test-lbs
   tasks:
     - name: creating a security group
       ec2_group:
@@ -43,7 +47,7 @@
         wait: yes
         group: "{{ sgname }}"
         region: "{{ region }}"
-        vpc_subnet_id: subnet-ba978985
+        vpc_subnet_id: "{{ vpcsubnet }}"
         assign_public_ip: yes
         instance_tags:
             Name: "{{ ins_name }}"
@@ -52,7 +56,86 @@
         var: ec2_out
     - name: add host to group "{{ ins_name }}"
       add_host:
-        name: localhost
+        name: "{{ item.dns_name }}"
+        groups: webservers
+      loop: "{{ ec2_out.tagged_instances }}"
       register: host_out
     - debug:
         var: host_out
+    - name: wait for connection
+      wait_for:
+        host: "{{ item.dns_name }}"
+        port: 22
+        delay: 5
+        timeout: 360
+        state: started
+      loop: "{{ ec2_out.tagged_instances }}"
+      
+    - name: creating a security group for load balancer
+      ec2_group:
+        name: "{{ lbssgname }}"
+        description: my lbs sg
+        vpc_id: "{{ vpcid }}"
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports:
+              - 80
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow ports 80 for lb
+      register: lbssg_out
+    - debug:
+        var: lbssg_out
+        
+    - name: Basic provisioning for lbs
+      ec2_elb_lb:
+        name: "{{ elbname }}"
+        region: "{{ region }}"
+        state: present
+        zones:
+          - us-east-1e
+        listeners:
+          - protocol: http # options are http, https, ssl, tcp
+            load_balancer_port: 80
+            instance_port: 80
+      register: lbs_out
+    - debug:
+        var: lbs_out
+#        
+#    - name: Instance Register
+#      ec2_elb:
+#        instance_id: "{{ ansible_ec2_instance_id }}"
+#        ec2_elbs: "{{ item }}"
+#        state: present
+#      loop:
+- hosts: webservers
+  become: True
+  gather_facts: True
+  remote_user: ec2-user
+  vars:
+    ansible_ssh_private_key_file: /home/ec2-user/environment/my-key.pem
+  tasks:
+    - name: ensure apache is at the latest version
+      yum:
+        name: httpd
+        state: latest
+    - name: ensure apache is running
+      service:
+        name: httpd
+        state: started
+    - name: Templating the httpd.conf
+      template:
+        src: /home/ec2-user/environment/httpd.j2
+        dest: /etc/httpd/conf/httpd.conf
+      notify: restart apache
+    - copy:
+        src: files/index.html
+        dest: /var/www/html/index.html
+    - copy:
+        src: files/new.html
+        dest: /var/www/html/new.html
+  handlers:
+    - name: restart apache
+      service:
+        name: httpd
+        state: restarted
